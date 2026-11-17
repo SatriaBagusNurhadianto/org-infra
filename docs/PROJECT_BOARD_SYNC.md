@@ -1,6 +1,16 @@
 # Compliance Automation Project Board Sync
 
-Automates keeping the private
+> [!IMPORTANT]
+> **Retired — retained temporarily for historical reference.**
+> The project-board sync and sprint-velocity workflows were removed in
+> [PR #745](https://github.com/complytime/org-infra/pull/745); the temporary
+> credential diagnostic has also been removed. No scheduled or manual Actions
+> entry point remains for this automation. The setup, token, and workflow-running
+> instructions below describe the retired implementation, not a supported setup.
+> Do not recreate `PROJECT_SYNC_TOKEN` based on these instructions.
+> Supporting scripts and configuration remain in the repository.
+
+The retired automation kept the private
 [Compliance Automation planning](https://github.com/orgs/complytime/projects/14)
 board populated with open issues and pull requests from:
 
@@ -12,11 +22,10 @@ board populated with open issues and pull requests from:
 
 Archived repositories are skipped by default.
 
-## What the automation does
+## Historical automation behavior
 
-On a 15-minute schedule (GitHub Actions' shortest supported interval is
-5 minutes; 1-minute cron is not honored) and via manual `workflow_dispatch`. Scheduled runs can still be
-delayed under GitHub load:
+The workflow previously ran on a 15-minute schedule and via manual
+`workflow_dispatch`:
 
 1. Discovers repositories from `project-sync-config.yml`
 2. Links same-org repositories to project `#14` (idempotent). Cross-org repos
@@ -51,25 +60,26 @@ delayed under GitHub load:
    child stories, not the epic. GitHub cannot hide Size in the board UI, so
    a value set by hand is undone on the next 15-minute tick.
 
-The workflow lives only in `org-infra` (it is **not** synced out to consumer repos).
-A new PR is picked up on the next 15-minute tick (GitHub does not let this
-org-infra workflow subscribe to `pull_request` events in other repositories).
+The workflow ran only in `org-infra` and was not synced to consumer repositories.
+It discovered new PRs by polling rather than subscribing to events in other
+repositories.
+
+## Historical files
 
 | File | Role |
 |---|---|
 | `project-sync-config.yml` | Orgs, exclusions, and project target |
 | `scripts/sync-project-board.py` | Discovery + GraphQL mutations |
 | `scripts/lib/github_client.py` | Shared REST/GraphQL client |
-| `.github/workflows/sync_project_board.yml` | Schedule + manual trigger |
+| `.github/workflows/sync_project_board.yml` | Removed: former schedule + manual trigger |
 | `scripts/report-sprint-velocity.py` | End-of-sprint velocity averages |
-| `.github/workflows/report_sprint_velocity.yml` | Manual velocity report |
+| `.github/workflows/report_sprint_velocity.yml` | Removed: former manual velocity report |
 
-See [Sprint velocity report](SPRINT_VELOCITY.md) for completed-sprint averages
-(size, organization, milestone). That report is read-only and is meant to be
-run after a sprint closes; it is useful to run now so the pipeline is in place
-before history exists.
+See the historical [Sprint velocity report](SPRINT_VELOCITY.md) guide for the
+former read-only report of completed-sprint averages by size, organization,
+and milestone.
 
-## Why a PAT (not the sync GitHub App)
+## Historical credential design
 
 GitHub App installation tokens are scoped to a **single** organization.
 Adding an issue from `Agentic-SSDLC` or `unbound-force` onto a project owned
@@ -77,7 +87,7 @@ by `complytime` requires a credential that can see all three orgs and write
 to the project. Use a fine-grained or classic personal access token (or a
 machine-user token) stored as `PROJECT_SYNC_TOKEN`.
 
-## One-time setup
+## Historical one-time setup (do not follow)
 
 ### 1. Create the token
 
@@ -114,7 +124,7 @@ Actions → **Sync Compliance Automation Project Board** → Run workflow
 
 Optional: set `orgs` to a single org (for example `complytime`) to stage the rollout.
 
-## Local dry-run
+## Historical local examples
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"   # needs project write for apply mode
@@ -123,7 +133,7 @@ python scripts/sync-project-board.py --config project-sync-config.yml --dry-run
 python scripts/sync-project-board.py --config project-sync-config.yml --backfill-org always
 ```
 
-## Changing scope
+## Historical scope configuration
 
 Edit `project-sync-config.yml`:
 

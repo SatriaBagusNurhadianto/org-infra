@@ -61,9 +61,7 @@ org-infra/
 │  │  ├── reusable_stale_reviews.yml        # Detect and flag PRs with overdue review requests.
 │  │  ├── reusable_vuln_scan.yml            # Vulnerability scanning via OSV-Scanner and Trivy.
 │  │  ├── sync_labels.yml                   # Manual workflow to reconcile repository labels from policy.
-│  │  ├── sync_org_repositories.yml         # Manual, scheduled, and event-based workflow to synchronize files.
-│  │  ├── sync_project_board.yml            # Sync open issues/PRs into Compliance Automation planning board.
-│  │  └── report_sprint_velocity.yml        # Manual Done-per-sprint averages from the planning board.
+│  │  └── sync_org_repositories.yml         # Manual, scheduled, and event-based workflow to synchronize files.
 │  ├── dependabot.yml                       # Dependabot settings for GitHub Actions and Go modules.
 │  ├── dependabot_python.yml                # Dependabot settings for GitHub Actions (Python repos) and pip.
 │  └── pull_request_template.md             # PR template applicable to all repositories.
@@ -72,8 +70,8 @@ org-infra/
 ├── docs/                                   # More detailed and specific documentation.
 │  ├── LABEL_SYNC.md                        # Documentation for cross-repo label standardization.
 │  ├── LOCAL_TESTING.md                     # Documentation on how to test synchronization locally.
-│  ├── PROJECT_BOARD_SYNC.md                # Compliance Automation project board sync setup.
-│  ├── SPRINT_VELOCITY.md                   # End-of-sprint Done averages from the planning board.
+│  ├── PROJECT_BOARD_SYNC.md                # Retired project sync; temporary historical reference.
+│  ├── SPRINT_VELOCITY.md                   # Retired sprint reporting; temporary historical reference.
 │  └── SYNC_REPOSITORIES_SETUP.md          # Documentation on how to setup the repository synchronization infrastructure.
 ├── scripts/
 │  ├── lib/                                 # Shared GitHub client and project-config helpers.
@@ -88,6 +86,20 @@ org-infra/
 ├── project-sync-config.yml                 # Orgs/repos synced into Compliance Automation planning board
 └── README.md                               # This file.
 ```
+
+---
+
+## Retired project automation
+
+The project-board sync and sprint-velocity workflows were removed in
+[PR #745](https://github.com/complytime/org-infra/pull/745). Neither workflow
+is scheduled or available for manual dispatch. The temporary credential
+diagnostic has also been removed.
+
+[Project board sync](docs/PROJECT_BOARD_SYNC.md) and
+[sprint velocity](docs/SPRINT_VELOCITY.md) documentation are retained temporarily
+for historical reference, not as current setup instructions. Supporting scripts
+and configuration remain in the repository; they do not run automatically.
 
 ---
 
@@ -134,7 +146,7 @@ See [`docs/LOCAL_TESTING.md`](docs/LOCAL_TESTING.md) for detailed setup and trou
 * Reusable workflows are prefixed by `reusable_` and should have a clear, descriptive name reflecting its function.
 * Reusable workflows are generic enough to be consumed by any repository within the organization.
 * Regular workflows consuming reusable workflows are prefixed by `ci_`.
-* Workflows that run only in org-infra (not synced, not reusable) use a verb prefix such as `sync_` or `report_` (`sync_labels.yml`, `sync_project_board.yml`, `report_sprint_velocity.yml`).
+* Workflows that run only in org-infra (not synced, not reusable) use a verb prefix such as `sync_` or `report_` (for example, `sync_labels.yml`).
 * Workflows must ensure the Principle of Least Privilege.
 * Write permissions must be avoided. When necessary, they are defined in the minimal possible scope.
 * Prefer defining explicit permissions per Job.
