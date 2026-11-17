@@ -1,96 +1,121 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Sync open issues/PRs from configured organizations into the
-# Compliance Automation planning project board.
-#
-# Cross-org access requires a classic or fine-grained PAT stored as
-# PROJECT_SYNC_TOKEN (GitHub App installation tokens are single-org).
-# See docs/PROJECT_BOARD_SYNC.md.
+# Project sync is retired. Manual runs identify PROJECT_SYNC_TOKEN and can
+# explicitly revoke it without exposing its value. Remove after retirement.
 
-name: Sync Compliance Automation Project Board
+name: Identify and retire project token
 
 on:
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Dry run (discover only; do not mutate the project)'
+      revoke:
+        description: 'Irreversibly revoke PROJECT_SYNC_TOKEN after identifying its owner'
         required: false
         type: boolean
         default: false
-      orgs:
-        description: 'Optional org filter (space-separated). Leave empty for all configured orgs.'
-        required: false
-        type: string
-        default: ''
-      backfill_org:
-        description: >-
-          When to walk existing board items to fix Organization.
-          auto skips that listing when this tick already set Organization on
-          new items; always forces a full backfill; never skips it.
-        required: false
-        type: choice
-        options:
-          - auto
-          - always
-          - never
-        default: auto
-  schedule:
-    # Every 15 minutes. Reduced from */5 to cut API consumption (~3x fewer
-    # ticks per hour) while keeping acceptable latency for a planning board.
-    # See: https://github.com/complytime/org-infra/issues/576
-    - cron: '*/15 * * * *'
 
-# A full sync can take several minutes. Keep one run in flight (and at most
-# one queued) so 15-minute ticks do not pile up.
+# Serialize diagnostics and revocation so they cannot race each other.
 concurrency:
   group: sync-compliance-automation-project-board
   cancel-in-progress: false
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
-  sync-project-board:
-    name: Sync project board
+  diagnose-project-token:
+    name: Identify project token (optionally revoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 3
+    permissions: {}
     steps:
-      - name: Checkout org-infra
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          # Hash-pinned install for Scorecard Pinned-Dependencies
-          python -m pip install --require-hashes -r requirements-project-sync.txt
-
-      - name: Sync project board
+      - name: Identify credential and optionally revoke
+        shell: python3 {0}
         env:
-          GITHUB_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run || false }}
-          ORGS: ${{ inputs.orgs || '' }}
-          BACKFILL_ORG: ${{ inputs.backfill_org || 'auto' }}
+          PROJECT_SYNC_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
+          REVOKE: ${{ inputs.revoke }}
         run: |
-          if [ -z "$GITHUB_TOKEN" ]; then
-            echo "::error::PROJECT_SYNC_TOKEN secret is not configured. See docs/PROJECT_BOARD_SYNC.md"
-            exit 1
-          fi
+          # SPDX-License-Identifier: Apache-2.0
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from typing import Optional, Tuple
 
-          ARGS=(--config project-sync-config.yml --backfill-org "$BACKFILL_ORG")
-          if [ "$DRY_RUN" = "true" ]; then
-            ARGS+=(--dry-run)
-          fi
-          if [ -n "$ORGS" ]; then
-            ARGS+=(--orgs "$ORGS")
-          fi
+          API_URL = "https://api.github.com"
+          REQUEST_TIMEOUT = 30
+          TOKEN_TYPES = {
+              "github_pat_": "Fine-grained personal access token",
+              "ghp_": "Classic personal access token",
+              "gho_": "OAuth access token",
+              "ghu_": "GitHub App user access token",
+              "ghs_": "GitHub App installation access token",
+              "ghr_": "GitHub App refresh token",
+          }
+          REVOCABLE_PREFIXES = ("github_pat_", "ghp_", "gho_", "ghu_", "ghr_")
 
-          python scripts/sync-project-board.py "${ARGS[@]}"
+
+          def request(
+              path: str, *, authenticate: bool = True, payload: Optional[dict] = None
+          ) -> Tuple[int, bytes]:
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              if authenticate:
+                  headers["Authorization"] = f"Bearer {token}"
+              body = None
+              if payload is not None:
+                  headers["Content-Type"] = "application/json"
+                  body = json.dumps(payload).encode()
+              api_request = urllib.request.Request(f"{API_URL}{path}", data=body, headers=headers)
+              try:
+                  with urllib.request.urlopen(api_request, timeout=REQUEST_TIMEOUT) as response:
+                      return response.status, response.read()
+              except urllib.error.HTTPError as error:
+                  # Never log response bodies, headers, or exception details.
+                  with error:
+                      return error.code, b""
+              except OSError:
+                  raise SystemExit("::error::GitHub request failed; details suppressed")
+
+
+          token = os.environ.get("PROJECT_SYNC_TOKEN", "")
+          if not token:
+              raise SystemExit("::error::PROJECT_SYNC_TOKEN is not configured")
+          token_type = next(
+              (label for prefix, label in TOKEN_TYPES.items() if token.startswith(prefix)),
+              "Unknown credential format",
+          )
+          print(f"Credential type: {token_type}", flush=True)
+          status, body = request("/user")
+          if status != 200:
+              raise SystemExit(
+                  f"::error::Identity lookup returned HTTP {status}; owner unconfirmed; not revoking"
+              )
+          try:
+              identity = json.loads(body)
+              login, account_id = identity["login"], identity["id"]
+              if not isinstance(login, str) or type(account_id) is not int:
+                  raise ValueError
+          except (ValueError, KeyError, TypeError):
+              raise SystemExit("::error::Invalid identity response; not revoking")
+          print(f"Authenticated account: {json.dumps(login)}; account ID: {account_id}", flush=True)
+
+          if os.environ.get("REVOKE", "false").lower() == "true":
+              if not token.startswith(REVOCABLE_PREFIXES):
+                  raise SystemExit("::error::Credential format is not supported for revocation")
+              # This endpoint requires NO Authorization header, even for our token.
+              status, _ = request(
+                  "/credentials/revoke", authenticate=False, payload={"credentials": [token]}
+              )
+              if status != 202:
+                  raise SystemExit(f"::error::Revocation request returned HTTP {status}")
+              status, _ = request("/user")
+              if status != 401:
+                  raise SystemExit(
+                      f"::error::Revocation accepted but NOT confirmed (HTTP {status}); "
+                      "run the diagnostic again to check authentication"
+                  )
+              print("Revocation confirmed: credential now returns HTTP 401.")
+          else:
+              print("Read-only diagnostic complete; no revocation requested.")
