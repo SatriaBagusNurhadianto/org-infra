@@ -78,6 +78,7 @@ def _run_diagnostic(
         assert context.keylog_filename is None
     for call in connection.request.call_args_list:
         method, path, body, headers = call.args
+        assert headers["User-Agent"] == "org-infra-project-token-diagnostic"
         if path == "/credentials/revoke":
             assert method == "POST"
             assert "Authorization" not in headers
