@@ -24,25 +24,30 @@ permissions: {}
 jobs:
   diagnose-project-token:
     name: Identify project token (optionally revoke)
+    # Only execute the reviewed default-branch version.
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions: {}
     steps:
       - name: Identify credential and optionally revoke
-        shell: python3 {0}
+        shell: python3 -I {0}
         env:
           PROJECT_SYNC_TOKEN: ${{ secrets.PROJECT_SYNC_TOKEN }}
           REVOKE: ${{ inputs.revoke }}
         run: |
           # SPDX-License-Identifier: Apache-2.0
+          import http.client
           import json
           import os
-          import urllib.error
-          import urllib.request
+          import re
+          import ssl
+          from contextlib import closing
           from typing import Optional, Tuple
 
-          API_URL = "https://api.github.com"
+          API_HOST = "api.github.com"
           REQUEST_TIMEOUT = 30
+          MAX_IDENTITY_BYTES = 16384
           TOKEN_TYPES = {
               "github_pat_": "Fine-grained personal access token",
               "ghp_": "Classic personal access token",
@@ -55,7 +60,7 @@ jobs:
 
 
           def request(
-              path: str, *, authenticate: bool = True, payload: Optional[dict] = None
+              token: str, path: str, *, authenticate: bool = True, payload: Optional[dict] = None
           ) -> Tuple[int, bytes]:
               headers = {
                   "Accept": "application/vnd.github+json",
@@ -67,55 +72,74 @@ jobs:
               if payload is not None:
                   headers["Content-Type"] = "application/json"
                   body = json.dumps(payload).encode()
-              api_request = urllib.request.Request(f"{API_URL}{path}", data=body, headers=headers)
-              try:
-                  with urllib.request.urlopen(api_request, timeout=REQUEST_TIMEOUT) as response:
-                      return response.status, response.read()
-              except urllib.error.HTTPError as error:
-                  # Never log response bodies, headers, or exception details.
-                  with error:
-                      return error.code, b""
-              except OSError:
-                  raise SystemExit("::error::GitHub request failed; details suppressed")
+              # Direct HTTPS never follows redirects or uses environment proxy settings.
+              # No response headers, error bodies, or transport exceptions are logged.
+              tls_context = ssl.create_default_context()
+              tls_context.keylog_filename = None
+              with closing(
+                  http.client.HTTPSConnection(API_HOST, timeout=REQUEST_TIMEOUT, context=tls_context)
+              ) as connection:
+                  connection.set_debuglevel(0)
+                  connection.request("POST" if body is not None else "GET", path, body, headers)
+                  response = connection.getresponse()
+                  identity = b""
+                  if path == "/user" and response.status == 200:
+                      identity = response.read(MAX_IDENTITY_BYTES + 1)
+                      if len(identity) > MAX_IDENTITY_BYTES:
+                          raise ValueError
+                  return response.status, identity
 
 
-          token = os.environ.get("PROJECT_SYNC_TOKEN", "")
-          if not token:
-              raise SystemExit("::error::PROJECT_SYNC_TOKEN is not configured")
-          token_type = next(
-              (label for prefix, label in TOKEN_TYPES.items() if token.startswith(prefix)),
-              "Unknown credential format",
-          )
-          print(f"Credential type: {token_type}", flush=True)
-          status, body = request("/user")
-          if status != 200:
-              raise SystemExit(
-                  f"::error::Identity lookup returned HTTP {status}; owner unconfirmed; not revoking"
+          def main() -> None:
+              token = os.environ.pop("PROJECT_SYNC_TOKEN", "")
+              # Reject unsafe header characters without including the offending value.
+              if not re.fullmatch(r"[A-Za-z0-9_]+", token):
+                  raise SystemExit("::error::Credential is missing or malformed; not revoking")
+              token_type = next(
+                  (label for prefix, label in TOKEN_TYPES.items() if token.startswith(prefix)),
+                  "Unknown credential format",
               )
-          try:
+              print(f"Credential type: {token_type}", flush=True)
+              status, body = request(token, "/user")
+              if status != 200:
+                  raise SystemExit(
+                      f"::error::Identity lookup returned HTTP {status}; owner unconfirmed; not revoking"
+                  )
               identity = json.loads(body)
               login, account_id = identity["login"], identity["id"]
-              if not isinstance(login, str) or type(account_id) is not int:
+              # Only allow the public identifiers we intend to disclose in the logs.
+              if (
+                  not isinstance(login, str)
+                  or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?", login)
+                  or token in login
+                  or type(account_id) is not int
+                  or not 0 < account_id < 2**63
+              ):
                   raise ValueError
-          except (ValueError, KeyError, TypeError):
-              raise SystemExit("::error::Invalid identity response; not revoking")
-          print(f"Authenticated account: {json.dumps(login)}; account ID: {account_id}", flush=True)
+              print(f"Authenticated account: {login}; account ID: {account_id}", flush=True)
 
-          if os.environ.get("REVOKE", "false").lower() == "true":
-              if not token.startswith(REVOCABLE_PREFIXES):
-                  raise SystemExit("::error::Credential format is not supported for revocation")
-              # This endpoint requires NO Authorization header, even for our token.
-              status, _ = request(
-                  "/credentials/revoke", authenticate=False, payload={"credentials": [token]}
-              )
-              if status != 202:
-                  raise SystemExit(f"::error::Revocation request returned HTTP {status}")
-              status, _ = request("/user")
-              if status != 401:
-                  raise SystemExit(
-                      f"::error::Revocation accepted but NOT confirmed (HTTP {status}); "
-                      "run the diagnostic again to check authentication"
+              if os.environ.get("REVOKE", "false").lower() == "true":
+                  if not token.startswith(REVOCABLE_PREFIXES):
+                      raise SystemExit("::error::Credential format is not supported for revocation")
+                  # This endpoint requires NO Authorization header, even for our token.
+                  status, _ = request(
+                      token, "/credentials/revoke", authenticate=False, payload={"credentials": [token]}
                   )
-              print("Revocation confirmed: credential now returns HTTP 401.")
-          else:
-              print("Read-only diagnostic complete; no revocation requested.")
+                  if status != 202:
+                      raise SystemExit(f"::error::Revocation request returned HTTP {status}")
+                  status, _ = request(token, "/user")
+                  if status != 401:
+                      raise SystemExit(
+                          f"::error::Revocation accepted but NOT confirmed (HTTP {status}); "
+                          "run the diagnostic again to check authentication"
+                      )
+                  print("Revocation confirmed: credential now returns HTTP 401.")
+              else:
+                  print("Read-only diagnostic complete; no revocation requested.")
+
+
+          try:
+              main()
+          except Exception:
+              # Fail closed without a traceback, even for unexpected library failures.
+              raise SystemExit("::error::Diagnostic failed; details suppressed") from None
