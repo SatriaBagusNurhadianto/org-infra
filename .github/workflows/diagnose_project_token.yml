@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Project sync is retired. Manual runs identify PROJECT_SYNC_TOKEN and can
-# explicitly revoke it without exposing its value. Remove after retirement.
+# Temporary manual diagnostic to identify PROJECT_SYNC_TOKEN and optionally
+# revoke it without exposing its value. Remove after the investigation.
 
 name: Identify and retire project token
 
