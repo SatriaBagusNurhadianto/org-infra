@@ -8,6 +8,7 @@ on:
       - ".github/workflows/ci_test_preflight.yml"
       - ".github/workflows/reusable_release_preflight.yml"
       - "tests/test_preflight_token.sh"
+      - "tests/test_preflight_check_discovery.sh"
   push:
     branches:
       - main
@@ -15,6 +16,7 @@ on:
       - ".github/workflows/ci_test_preflight.yml"
       - ".github/workflows/reusable_release_preflight.yml"
       - "tests/test_preflight_token.sh"
+      - "tests/test_preflight_check_discovery.sh"
 
 permissions:
   contents: read
