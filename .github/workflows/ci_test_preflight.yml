@@ -31,3 +31,6 @@ jobs:
 
       - name: Run preflight token assertions
         run: bash tests/test_preflight_token.sh
+
+      - name: Run preflight check discovery assertions
+        run: bash tests/test_preflight_check_discovery.sh
